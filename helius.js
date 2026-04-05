@@ -3,10 +3,10 @@ const HELIUS_WEBHOOK_ID = process.env.HELIUS_WEBHOOK_ID || "";
 const BASE_URL = "https://api.helius.xyz/v0";
 
 async function getWebhook() {
-  const res = await fetch(`${BASE_URL}/webhooks/${HELIUS_WEBHOOK_ID}?api-key=${HELIUS_API_KEY}`, {
+  const res = await fetch(BASE_URL + "/webhooks/" + HELIUS_WEBHOOK_ID + "?api-key=" + HELIUS_API_KEY, {
     signal: AbortSignal.timeout(8000),
   });
-  if (!res.ok) throw new Error(`Helius getWebhook failed: ${res.status}`);
+  if (!res.ok) throw new Error("Helius getWebhook failed: " + res.status);
   return res.json();
 }
 
@@ -19,17 +19,15 @@ async function updateWebhookAddresses(addresses) {
     webhookType: current.webhookType || "enhanced",
     authHeader: current.authHeader,
   };
-
-  const res = await fetch(`${BASE_URL}/webhooks/${HELIUS_WEBHOOK_ID}?api-key=${HELIUS_API_KEY}`, {
+  const res = await fetch(BASE_URL + "/webhooks/" + HELIUS_WEBHOOK_ID + "?api-key=" + HELIUS_API_KEY, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(10000),
   });
-
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Helius updateWebhook failed: ${res.status} ${text}`);
+    throw new Error("Helius updateWebhook failed: " + res.status + " " + text);
   }
   return res.json();
 }
@@ -37,14 +35,14 @@ async function updateWebhookAddresses(addresses) {
 async function addMintToHelius(mint) {
   try {
     if (!HELIUS_API_KEY || !HELIUS_WEBHOOK_ID) {
-      console.warn("HELIUS_API_KEY or HELIUS_WEBHOOK_ID not set — skipping.");
+      console.warn("HELIUS_API_KEY or HELIUS_WEBHOOK_ID not set");
       return true;
     }
     const current = await getWebhook();
     const existing = current.accountAddresses || [];
     if (existing.includes(mint)) return true;
-    await updateWebhookAddresses([...existing, mint]);
-    console.log(`✅ Added mint to Helius: ${mint}`);
+    await updateWebhookAddresses(existing.concat([mint]));
+    console.log("Added mint to Helius: " + mint);
     return true;
   } catch (err) {
     console.error("addMintToHelius error:", err.message);
@@ -57,9 +55,9 @@ async function removeMintFromHelius(mint) {
     if (!HELIUS_API_KEY || !HELIUS_WEBHOOK_ID) return true;
     const current = await getWebhook();
     const existing = current.accountAddresses || [];
-    const updated = existing.filter((a) => a !== mint);
+    const updated = existing.filter(function(a) { return a !== mint; });
     await updateWebhookAddresses(updated);
-    console.log(`🗑 Removed mint from Helius: ${mint}`);
+    console.log("Removed mint from Helius: " + mint);
     return true;
   } catch (err) {
     console.error("removeMintFromHelius error:", err.message);
