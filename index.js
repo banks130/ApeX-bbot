@@ -495,9 +495,11 @@ app.get("/", function(req, res) { res.send("APEX Buy Bot running"); });
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, function() { console.log("APEX Buy Bot on port " + PORT); });
 
-bot.start({
-  onStart: () => console.log("Bot polling started"),
-});
-
 process.once('SIGTERM', () => bot.stop());
 process.once('SIGINT', () => bot.stop());
+
+setTimeout(() => {
+  bot.start({
+    onStart: () => console.log("Bot polling started"),
+  });
+}, 5000);
