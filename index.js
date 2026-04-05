@@ -32,26 +32,48 @@ function isGroup(ctx) {
   return ["group", "supergroup"].includes(ctx.chat?.type);
 }
 
-bot.on("my_chat_member", async (ctx) => {
-  const newStatus = ctx.myChatMember?.new_chat_member?.status;
-  const chatId = String(ctx.chat.id);
-  const chatTitle = ctx.chat.title || "your group";
+function buildSettingsKeyboard(group) {
+  const s = group.settings || {};
+  const minBuy = s.minBuySol ?? 0.05;
+  const whale = s.whaleSol ?? 10;
+  const cooldown = s.cooldownSeconds ?? 30;
+  const emoji = s.buyEmoji ?? "🟢";
+  const active = group.active;
+  const showPrice = s.showPrice !== false;
+  const ignoreMevs = s.ignoreMevs !== false;
 
-  if (newStatus === "administrator" || newStatus === "member") {
-    if (!["group", "supergroup"].includes(ctx.chat.type)) return;
-    store.addGroup(chatId, {
-      title: chatTitle,
-      addedAt: Date.now(),
-      mint: null,
-      active: false,
-    });
-    await bot.api.sendMessage(chatId, formatWelcome(chatTitle), { parse_mode: "HTML" });
-  }
+  return new InlineKeyboard()
+    .text(`🎯 Min Buy: ${minBuy} SOL`, "set_minbuy")
+    .text(`🐳 Whale: ${whale} SOL`, "set_whale")
+    .row()
+    .text(`${emoji} Emoji`, "set_emoji")
+    .text(`⏱ Cooldown: ${cooldown}s`, "set_cooldown")
+    .row()
+    .text(`${showPrice ? "✅" : "❌"} Show Price`, "toggle_price")
+    .text(`${ignoreMevs ? "✅" : "❌"} Ignore MEVs`, "toggle_mevs")
+    .row()
+    .text(`${active ? "⏸ Pause Alerts" : "▶️ Resume Alerts"}`, "toggle_active")
+    .text("📊 Stats", "show_stats")
+    .row()
+    .text("🗑 Unregister Token", "confirm_unregister");
+}
 
-  if (newStatus === "kicked" || newStatus === "left") {
-    store.removeGroup(chatId);
-  }
-});
+function buildSettingsText(group) {
+  const s = group.settings || {};
+  return (
+    `⚙️ <b>APEX Settings</b>\n\n` +
+    `🪙 Token: <b>${group.tokenName} (${group.tokenSymbol})</b>\n` +
+    `📍 Mint: <code>${group.mint}</code>\n\n` +
+    `• Min buy: <b>${s.minBuySol ?? 0.05} SOL</b>\n` +
+    `• Whale at: <b>${s.whaleSol ?? 10} SOL</b>\n` +
+    `• Cooldown: <b>${s.cooldownSeconds ?? 30}s</b>\n` +
+    `• Emoji: <b>${s.buyEmoji ?? "🟢"}</b>\n` +
+    `• Show Price: <b>${s.showPrice !== false ? "✅" : "❌"}</b>\n` +
+    `• Ignore MEVs: <b>${s.ignoreMevs !== false ? "✅" : "❌"}</b>\n` +
+    `• Alerts: <b>${group.active ? "▶️ Active" : "⏸ Paused"}</b>\n\n` +
+    `<i>Tap a button below to change settings</i>`
+  );
+}
 
 bot.command("start", async (ctx) => {
   if (isGroup(ctx)) {
@@ -60,18 +82,13 @@ bot.command("start", async (ctx) => {
 
     if (group?.mint) {
       return ctx.reply(
-        `🔺 <b>APEX Buy Bot</b> is active in this group!\n\n` +
-        `Tracking: <b>${group.tokenName || group.mint}</b>\n\n` +
-        `Use /settings to view or change settings.`,
+        `🔺 <b>APEX Buy Bot</b> is active!\n\nTracking: <b>${group.tokenName || group.mint}</b>\n\nUse /settings to customize.`,
         { parse_mode: "HTML" }
       );
     }
 
     return ctx.reply(
-      `👋 <b>APEX Buy Bot is here!</b>\n\n` +
-      `To start receiving buy alerts, a group admin must register your token:\n\n` +
-      `<code>/register YOUR_TOKEN_MINT_ADDRESS</code>\n\n` +
-      `Example:\n<code>/register EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v</code>`,
+      `👋 <b>APEX Buy Bot is here!</b>\n\nTo start receiving buy alerts, a group admin must register your token:\n\n<code>/register YOUR_TOKEN_MINT_ADDRESS</code>`,
       { parse_mode: "HTML" }
     );
   }
@@ -89,7 +106,7 @@ bot.command("help", (ctx) => {
     `/register &lt;mint&gt; — Register your token\n` +
     `/unregister — Stop tracking\n\n` +
     `<b>Settings (Group Admins)</b>\n` +
-    `/settings — View current settings\n` +
+    `/settings — Open settings panel\n` +
     `/setmin &lt;SOL&gt; — Min buy to alert\n` +
     `/setwhale &lt;SOL&gt; — Whale threshold\n` +
     `/setcooldown &lt;sec&gt; — Per-wallet cooldown\n` +
@@ -97,7 +114,7 @@ bot.command("help", (ctx) => {
     `/pause — Pause alerts\n` +
     `/resume — Resume alerts\n\n` +
     `<b>Public</b>\n` +
-    `/stats — Buy stats for this group\n` +
+    `/stats — Buy stats\n` +
     `/status — Bot status`,
     { parse_mode: "HTML" }
   );
@@ -146,6 +163,8 @@ bot.command("register", async (ctx) => {
       whaleSol: 10,
       cooldownSeconds: 30,
       buyEmoji: "🟢",
+      showPrice: true,
+      ignoreMevs: true,
     },
   });
 
@@ -187,18 +206,156 @@ bot.command("settings", async (ctx) => {
   const group = store.getGroup(chatId);
   if (!group?.mint) return ctx.reply("No token registered. Use /register first.");
 
-  const s = group.settings || {};
+  ctx.reply(buildSettingsText(group), {
+    parse_mode: "HTML",
+    reply_markup: buildSettingsKeyboard(group),
+  });
+});
+
+bot.callbackQuery("toggle_active", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = String(ctx.chat.id);
+  if (!(await isGroupAdmin(ctx))) return;
+  const group = store.getGroup(chatId);
+  if (!group) return;
+  store.updateGroup(chatId, { active: !group.active });
+  const updated = store.getGroup(chatId);
+  ctx.editMessageText(buildSettingsText(updated), {
+    parse_mode: "HTML",
+    reply_markup: buildSettingsKeyboard(updated),
+  });
+});
+
+bot.callbackQuery("toggle_price", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = String(ctx.chat.id);
+  if (!(await isGroupAdmin(ctx))) return;
+  const group = store.getGroup(chatId);
+  if (!group) return;
+  store.updateGroupSetting(chatId, "showPrice", !(group.settings?.showPrice !== false));
+  const updated = store.getGroup(chatId);
+  ctx.editMessageText(buildSettingsText(updated), {
+    parse_mode: "HTML",
+    reply_markup: buildSettingsKeyboard(updated),
+  });
+});
+
+bot.callbackQuery("toggle_mevs", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = String(ctx.chat.id);
+  if (!(await isGroupAdmin(ctx))) return;
+  const group = store.getGroup(chatId);
+  if (!group) return;
+  store.updateGroupSetting(chatId, "ignoreMevs", !(group.settings?.ignoreMevs !== false));
+  const updated = store.getGroup(chatId);
+  ctx.editMessageText(buildSettingsText(updated), {
+    parse_mode: "HTML",
+    reply_markup: buildSettingsKeyboard(updated),
+  });
+});
+
+bot.callbackQuery("set_minbuy", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = String(ctx.chat.id);
+  if (!(await isGroupAdmin(ctx))) return;
+  store.updateGroupSetting(chatId, "awaitingInput", "minBuySol");
+  ctx.reply("💬 Reply with the minimum buy amount in SOL (e.g. <code>0.1</code>)", { parse_mode: "HTML" });
+});
+
+bot.callbackQuery("set_whale", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = String(ctx.chat.id);
+  if (!(await isGroupAdmin(ctx))) return;
+  store.updateGroupSetting(chatId, "awaitingInput", "whaleSol");
+  ctx.reply("💬 Reply with the whale threshold in SOL (e.g. <code>10</code>)", { parse_mode: "HTML" });
+});
+
+bot.callbackQuery("set_cooldown", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = String(ctx.chat.id);
+  if (!(await isGroupAdmin(ctx))) return;
+  store.updateGroupSetting(chatId, "awaitingInput", "cooldownSeconds");
+  ctx.reply("💬 Reply with the cooldown in seconds (e.g. <code>30</code>)", { parse_mode: "HTML" });
+});
+
+bot.callbackQuery("set_emoji", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = String(ctx.chat.id);
+  if (!(await isGroupAdmin(ctx))) return;
+  store.updateGroupSetting(chatId, "awaitingInput", "buyEmoji");
+  ctx.reply("💬 Reply with your buy emoji (e.g. 🚀)", { parse_mode: "HTML" });
+});
+
+bot.callbackQuery("show_stats", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = String(ctx.chat.id);
+  const group = store.getGroup(chatId);
+  if (!group) return;
+  const solPrice = await getSolPrice();
+  const usdVol = ((group.totalVolumeSol || 0) * solPrice).toFixed(0);
   ctx.reply(
-    `⚙️ <b>APEX Settings</b>\n\n` +
-    `🪙 Token: <b>${group.tokenName} (${group.tokenSymbol})</b>\n` +
-    `📍 Mint: <code>${group.mint}</code>\n\n` +
-    `• Min buy: <b>${s.minBuySol ?? 0.05} SOL</b> → /setmin\n` +
-    `• Whale at: <b>${s.whaleSol ?? 10} SOL</b> → /setwhale\n` +
-    `• Cooldown: <b>${s.cooldownSeconds ?? 30}s</b> → /setcooldown\n` +
-    `• Emoji: <b>${s.buyEmoji ?? "🟢"}</b> → /setemoji\n` +
-    `• Alerts: <b>${group.active ? "▶️ Active" : "⏸ Paused"}</b> → /pause /resume`,
+    `📊 <b>${group.tokenName} (${group.tokenSymbol}) Stats</b>\n\n` +
+    `📦 Total Buys: <b>${group.totalBuys || 0}</b>\n` +
+    `👥 Unique Buyers: <b>${(group.uniqueBuyers || []).length}</b>\n` +
+    `💧 Volume: <b>${(group.totalVolumeSol || 0).toFixed(2)} SOL ($${usdVol})</b>\n` +
+    `🐳 Biggest Buy: <b>${(group.biggestBuy || 0).toFixed(2)} SOL</b>\n` +
+    `🏆 Milestones: <b>${group.milestones || 0}</b>`,
     { parse_mode: "HTML" }
   );
+});
+
+bot.callbackQuery("confirm_unregister", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = String(ctx.chat.id);
+  if (!(await isGroupAdmin(ctx))) return;
+  const kb = new InlineKeyboard()
+    .text("✅ Yes, unregister", "do_unregister")
+    .text("❌ Cancel", "cancel_unregister");
+  ctx.reply("⚠️ Are you sure you want to unregister your token? Buy alerts will stop.", { reply_markup: kb });
+});
+
+bot.callbackQuery("do_unregister", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = String(ctx.chat.id);
+  if (!(await isGroupAdmin(ctx))) return;
+  const group = store.getGroup(chatId);
+  if (!group?.mint) return;
+  const mint = group.mint;
+  store.removeMintGroup(mint, chatId);
+  const otherGroups = store.getGroupsForMint(mint);
+  if (otherGroups.length === 0) await removeMintFromHelius(mint);
+  store.updateGroup(chatId, { mint: null, active: false });
+  ctx.editMessageText(`✅ Stopped tracking <b>${group.tokenName}</b>.`, { parse_mode: "HTML" });
+});
+
+bot.callbackQuery("cancel_unregister", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  ctx.deleteMessage();
+});
+
+bot.on("message:text", async (ctx) => {
+  if (!isGroup(ctx)) return;
+  const chatId = String(ctx.chat.id);
+  const group = store.getGroup(chatId);
+  if (!group?.settings?.awaitingInput) return;
+  if (!(await isGroupAdmin(ctx))) return;
+
+  const field = group.settings.awaitingInput;
+  const text = ctx.message.text.trim();
+
+  let value;
+  if (field === "buyEmoji") {
+    value = text;
+  } else {
+    value = field === "cooldownSeconds" ? parseInt(text) : parseFloat(text);
+    if (isNaN(value) || value < 0) {
+      return ctx.reply("❌ Invalid value. Please enter a number.");
+    }
+  }
+
+  store.updateGroupSetting(chatId, field, value);
+  store.updateGroupSetting(chatId, "awaitingInput", null);
+  ctx.reply(`✅ Updated! Use /settings to see your full configuration.`, { parse_mode: "HTML" });
 });
 
 bot.command("setmin", async (ctx) => {
@@ -235,136 +392,4 @@ bot.command("setemoji", async (ctx) => {
 
 bot.command("pause", async (ctx) => {
   if (!isGroup(ctx) || !(await isGroupAdmin(ctx))) return ctx.reply("⛔ Group admins only.");
-  store.updateGroup(String(ctx.chat.id), { active: false });
-  ctx.reply("⏸ Buy alerts paused.");
-});
-
-bot.command("resume", async (ctx) => {
-  if (!isGroup(ctx) || !(await isGroupAdmin(ctx))) return ctx.reply("⛔ Group admins only.");
-  store.updateGroup(String(ctx.chat.id), { active: true });
-  ctx.reply("▶️ Buy alerts resumed.");
-});
-
-bot.command("stats", async (ctx) => {
-  const chatId = String(ctx.chat.id);
-  const group = store.getGroup(chatId);
-  if (!group?.mint) return ctx.reply("No token registered. Use /register first.");
-
-  const solPrice = await getSolPrice();
-  const usdVol = ((group.totalVolumeSol || 0) * solPrice).toFixed(0);
-
-  ctx.reply(
-    `📊 <b>${group.tokenName} (${group.tokenSymbol}) Stats</b>\n\n` +
-    `📦 Total Buys: <b>${group.totalBuys || 0}</b>\n` +
-    `👥 Unique Buyers: <b>${(group.uniqueBuyers || []).length}</b>\n` +
-    `💧 Volume: <b>${(group.totalVolumeSol || 0).toFixed(2)} SOL ($${usdVol})</b>\n` +
-    `🐳 Biggest Buy: <b>${(group.biggestBuy || 0).toFixed(2)} SOL</b>\n` +
-    `🏆 Milestones: <b>${group.milestones || 0}</b>`,
-    { parse_mode: "HTML" }
-  );
-});
-
-bot.command("status", async (ctx) => {
-  const chatId = String(ctx.chat.id);
-  const group = store.getGroup(chatId);
-
-  if (!group?.mint) {
-    return ctx.reply(
-      `🔺 <b>APEX Buy Bot</b>\n\nNot yet configured.\nUse /register &lt;mint&gt; to get started.`,
-      { parse_mode: "HTML" }
-    );
-  }
-
-  ctx.reply(
-    `🔺 <b>APEX Status</b>\n\n` +
-    `• Token: <b>${group.tokenName} (${group.tokenSymbol})</b>\n` +
-    `• Alerts: <b>${group.active ? "▶️ Active" : "⏸ Paused"}</b>\n` +
-    `• Min buy: <b>${group.settings?.minBuySol ?? 0.05} SOL</b>\n` +
-    `• Whale at: <b>${group.settings?.whaleSol ?? 10} SOL</b>\n` +
-    `• Cooldown: <b>${group.settings?.cooldownSeconds ?? 30}s</b>`,
-    { parse_mode: "HTML" }
-  );
-});
-
-bot.command("groups", (ctx) => {
-  if (!isSuperAdmin(ctx)) return;
-  const groups = store.getAllGroups();
-  const keys = Object.keys(groups);
-  if (!keys.length) return ctx.reply("No groups registered.");
-
-  const lines = keys.map((id, i) => {
-    const g = groups[id];
-    return `${i + 1}. <b>${g.title}</b>\n   Token: ${g.tokenName || "None"}\n   Buys: ${g.totalBuys || 0}`;
-  });
-
-  ctx.reply(`📋 <b>All Groups (${keys.length})</b>\n\n${lines.join("\n\n")}`, { parse_mode: "HTML" });
-});
-
-app.post("/webhook", async (req, res) => {
-  if (WEBHOOK_SECRET) {
-    const secret = req.headers["authorization"] || req.headers["x-helius-secret"];
-    if (secret !== WEBHOOK_SECRET) return res.sendStatus(401);
-  }
-  res.sendStatus(200);
-
-  const events = req.body;
-  if (!Array.isArray(events) || !events.length) return;
-
-  const solPrice = await getSolPrice();
-
-  for (const event of events) {
-    try {
-      const buy = parseHeliusWebhook(event);
-      if (!buy) continue;
-
-      const chatIds = store.getGroupsForMint(buy.tokenMint);
-      if (!chatIds.length) continue;
-
-      const walletProfile = await getWalletProfile(buy.buyer).catch(() => null);
-
-      for (const chatId of chatIds) {
-        const group = store.getGroup(chatId);
-        if (!group || !group.active) continue;
-
-        const s = group.settings || {};
-        const minBuy = s.minBuySol ?? 0.05;
-        const whaleSol = s.whaleSol ?? 10;
-        const cooldown = s.cooldownSeconds ?? 30;
-
-        if (buy.solSpent !== null && buy.solSpent < minBuy) continue;
-
-        const cooldownKey = `${chatId}:${buy.buyer}`;
-        const lastAlert = store.getWalletLastAlert(cooldownKey);
-        if (lastAlert && Date.now() - lastAlert < cooldown * 1000) continue;
-        store.setWalletLastAlert(cooldownKey);
-
-        const isWhale = buy.solSpent !== null && buy.solSpent >= whaleSol;
-        const isNewHolder = !(group.uniqueBuyers || []).includes(buy.buyer);
-
-        store.recordGroupBuy(chatId, buy.solSpent || 0, buy.buyer);
-        const updatedGroup = store.getGroup(chatId);
-
-        const msg = formatBuyAlert(buy, updatedGroup, walletProfile, solPrice, s, isWhale, isNewHolder);
-        await bot.api.sendMessage(chatId, msg, { parse_mode: "HTML", disable_web_page_preview: true });
-
-        const nextMilestoneIdx = updatedGroup.milestones || 0;
-        if (
-          nextMilestoneIdx < MILESTONE_COUNTS.length &&
-          updatedGroup.totalBuys >= MILESTONE_COUNTS[nextMilestoneIdx]
-        ) {
-          const milestoneMsg = formatMilestoneAlert(updatedGroup, MILESTONE_COUNTS[nextMilestoneIdx], solPrice);
-          await bot.api.sendMessage(chatId, milestoneMsg, { parse_mode: "HTML", disable_web_page_preview: true });
-          store.recordMilestone(chatId);
-        }
-      }
-    } catch (err) {
-      console.error("Webhook event error:", err.message);
-    }
-  }
-});
-
-app.get("/", (_, res) => res.send("🔺 APEX Buy Bot running"));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ APEX Buy Bot on port ${PORT}`));
-bot.start();
+  store.updateGroup(String(ctx.chat.id), { active​​​​​​​​​​​​​​​​
