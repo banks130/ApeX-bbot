@@ -21,26 +21,75 @@ const _tokenCache = {};
 
 async function getTokenInfo(mint) {
   if (_tokenCache[mint]) return _tokenCache[mint];
-  const res = await fetch(HELIUS_RPC, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0", id: "apex",
-      method: "getAsset",
-      params: { id: mint },
-    }),
-    signal: AbortSignal.timeout(8000),
-  });
-  const data = await res.json();
-  const asset = data?.result;
-  if (!asset) return null;
-  const info = {
-    name: asset.content?.metadata?.name || null,
-    symbol: asset.content?.metadata?.symbol || null,
-    decimals: asset.token_info?.decimals || 6,
-  };
-  _tokenCache[mint] = info;
-  return info;
+
+  // 1. Helius DAS
+  try {
+    const res = await fetch(HELIUS_RPC, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: "apex",
+        method: "getAsset",
+        params: { id: mint },
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await res.json();
+    const asset = data?.result;
+    if (asset?.content?.metadata?.name) {
+      const info = {
+        name: asset.content.metadata.name,
+        symbol: asset.content.metadata.symbol || "???",
+        decimals: asset.token_info?.decimals || 6,
+        image: asset.content?.files?.[0]?.uri || null,
+      };
+      _tokenCache[mint] = info;
+      return info;
+    }
+  } catch {}
+
+  // 2. pump.fun API
+  try {
+    const res = await fetch(`https://pump.fun/api/token/${mint}`, {
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.name) {
+        const info = {
+          name: data.name,
+          symbol: data.symbol || "???",
+          decimals: 6,
+          image: data.image_uri || null,
+        };
+        _tokenCache[mint] = info;
+        return info;
+      }
+    }
+  } catch {}
+
+  // 3. DexScreener
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
+      signal: AbortSignal.timeout(6000),
+    });
+    const data = await res.json();
+    const pair = data?.pairs?.[0];
+    if (pair?.baseToken?.name) {
+      const info = {
+        name: pair.baseToken.name,
+        symbol: pair.baseToken.symbol || "???",
+        decimals: 6,
+        image: null,
+        priceUsd: pair.priceUsd || null,
+        marketCap: pair.fdv || null,
+      };
+      _tokenCache[mint] = info;
+      return info;
+    }
+  } catch {}
+
+  return null;
 }
 
 const _walletCache = {};
