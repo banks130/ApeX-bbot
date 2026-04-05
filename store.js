@@ -13,7 +13,7 @@ function load() {
   try {
     if (fs.existsSync(STORE_PATH)) {
       const saved = JSON.parse(fs.readFileSync(STORE_PATH, "utf8"));
-      state = { ...state, ...saved };
+      state = Object.assign({}, state, saved);
     }
   } catch {
     console.warn("store.json not found, starting fresh.");
@@ -42,7 +42,7 @@ function addGroup(chatId, data) {
 
 function updateGroup(chatId, updates) {
   if (!state.groups[chatId]) state.groups[chatId] = {};
-  state.groups[chatId] = { ...state.groups[chatId], ...updates };
+  state.groups[chatId] = Object.assign({}, state.groups[chatId], updates);
   save();
 }
 
@@ -61,16 +61,12 @@ function updateGroupSetting(chatId, key, value) {
 function recordGroupBuy(chatId, solSpent, buyerAddress) {
   const group = state.groups[chatId];
   if (!group) return;
-
   group.totalBuys = (group.totalBuys || 0) + 1;
   group.totalVolumeSol = (group.totalVolumeSol || 0) + solSpent;
   if (solSpent > (group.biggestBuy || 0)) group.biggestBuy = solSpent;
-
   if (buyerAddress) {
     if (!group.uniqueBuyers) group.uniqueBuyers = [];
-    if (!group.uniqueBuyers.includes(buyerAddress)) {
-      group.uniqueBuyers.push(buyerAddress);
-    }
+    if (!group.uniqueBuyers.includes(buyerAddress)) group.uniqueBuyers.push(buyerAddress);
   }
   save();
 }
@@ -94,7 +90,7 @@ function addMintGroup(mint, chatId) {
 
 function removeMintGroup(mint, chatId) {
   if (!state.mintGroups[mint]) return;
-  state.mintGroups[mint] = state.mintGroups[mint].filter((id) => id !== chatId);
+  state.mintGroups[mint] = state.mintGroups[mint].filter(function(id) { return id !== chatId; });
   if (state.mintGroups[mint].length === 0) delete state.mintGroups[mint];
   save();
 }
@@ -105,10 +101,10 @@ function setWalletLastAlert(key) {
   state.walletCooldowns[key] = Date.now();
   const keys = Object.keys(state.walletCooldowns);
   if (keys.length > 10000) {
-    const oldest = keys
-      .sort((a, b) => state.walletCooldowns[a] - state.walletCooldowns[b])
-      .slice(0, 2000);
-    oldest.forEach((k) => delete state.walletCooldowns[k]);
+    const oldest = keys.sort(function(a, b) {
+      return state.walletCooldowns[a] - state.walletCooldowns[b];
+    }).slice(0, 2000);
+    oldest.forEach(function(k) { delete state.walletCooldowns[k]; });
   }
   save();
 }
