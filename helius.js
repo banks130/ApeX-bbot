@@ -14,10 +14,10 @@ async function updateWebhookAddresses(addresses) {
   const current = await getWebhook();
   const body = {
     webhookURL: current.webhookURL,
-    transactionTypes: current.transactionTypes,
+    transactionTypes: ["ANY"],
     accountAddresses: addresses,
-    webhookType: current.webhookType || "enhanced",
-    authHeader: current.authHeader,
+    webhookType: "enhanced",
+    authHeader: current.authHeader || "",
   };
   const res = await fetch(BASE_URL + "/webhooks/" + HELIUS_WEBHOOK_ID + "?api-key=" + HELIUS_API_KEY, {
     method: "PUT",
