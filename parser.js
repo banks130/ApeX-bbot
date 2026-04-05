@@ -1,10 +1,13 @@
 function parseHeliusWebhook(event) {
   if (event.type !== "SWAP") return null;
 
-  const swap = event?.events?.swap;
+  const swap = event && event.events ? event.events.swap : null;
   if (!swap) return null;
 
-  const { tokenInputs = [], tokenOutputs = [], nativeInput, nativeOutput } = swap;
+  const tokenInputs = swap.tokenInputs || [];
+  const tokenOutputs = swap.tokenOutputs || [];
+  const nativeInput = swap.nativeInput;
+  const nativeOutput = swap.nativeOutput;
 
   let solSpent = null;
   let tokenMint = null;
@@ -26,10 +29,11 @@ function parseHeliusWebhook(event) {
     return null;
   }
 
-  const buyer = event.feePayer || event.accountData?.[0]?.account || "Unknown";
+  const buyer = event.feePayer || (event.accountData && event.accountData[0] ? event.accountData[0].account : "Unknown");
   const signature = event.signature || "";
   const timestamp = event.timestamp ? new Date(event.timestamp * 1000) : new Date();
-  const transfer = event.tokenTransfers?.find((t) => t.mint === tokenMint);
+  const transfers = event.tokenTransfers || [];
+  const transfer = transfers.find(function(t) { return t.mint === tokenMint; });
 
   return {
     buyer,
@@ -38,8 +42,8 @@ function parseHeliusWebhook(event) {
     solSpent,
     signature,
     timestamp,
-    tokenSymbol: transfer?.symbol || "???",
-    tokenName: transfer?.tokenName || tokenMint?.slice(0, 6) + "...",
+    tokenSymbol: transfer ? (transfer.symbol || "???") : "???",
+    tokenName: transfer ? (transfer.tokenName || (tokenMint ? tokenMint.slice(0, 6) + "..." : "???")) : (tokenMint ? tokenMint.slice(0, 6) + "..." : "???"),
   };
 }
 
