@@ -411,6 +411,7 @@ app.post("/webhook", async (req, res) => {
     if (secret !== WEBHOOK_SECRET) return res.sendStatus(401);
   }
   res.sendStatus(200);
+  console.log("HELIUS DATA:", JSON.stringify(req.body).slice(0, 500));
 
   const events = req.body;
   if (!Array.isArray(events) || !events.length) return;
@@ -498,8 +499,17 @@ app.listen(PORT, function() { console.log("APEX Buy Bot on port " + PORT); });
 process.once('SIGTERM', () => bot.stop());
 process.once('SIGINT', () => bot.stop());
 
-setTimeout(() => {
+async function startBot() {
+  try {
+    await bot.api.deleteWebhook({ drop_pending_updates: true });
+    console.log("Cleared previous session");
+  } catch (e) {
+    console.log("Clear error:", e.message);
+  }
+  await new Promise((r) => setTimeout(r, 3000));
   bot.start({
     onStart: () => console.log("Bot polling started"),
   });
-}, 5000);
+}
+
+startBot();
