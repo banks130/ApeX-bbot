@@ -7,6 +7,8 @@ let state = {
   groups: {},
   mintGroups: {},
   walletCooldowns: {},
+  leaderboards: {},
+  spamTimes: {},
 };
 
 function load() {
@@ -109,9 +111,40 @@ function setWalletLastAlert(key) {
   save();
 }
 
+// ─── LEADERBOARD ───
+function updateLeaderboard(chatId, buyer, solSpent) {
+  if (!state.leaderboards[chatId]) state.leaderboards[chatId] = {};
+  if (!state.leaderboards[chatId][buyer]) {
+    state.leaderboards[chatId][buyer] = { buyer, totalSol: 0, buyCount: 0 };
+  }
+  state.leaderboards[chatId][buyer].totalSol += solSpent;
+  state.leaderboards[chatId][buyer].buyCount += 1;
+  save();
+}
+
+function getLeaderboard(chatId) {
+  const board = state.leaderboards[chatId] || {};
+  return Object.values(board).sort(function(a, b) {
+    return b.totalSol - a.totalSol;
+  });
+}
+
+// ─── SPAM TRACKING (in memory only, no save) ───
+const spamTimes = {};
+
+function getSpamTime(key) {
+  return spamTimes[key] || null;
+}
+
+function setSpamTime(key, time) {
+  spamTimes[key] = time;
+}
+
 module.exports = {
   getAllGroups, getGroup, addGroup, updateGroup, removeGroup,
   updateGroupSetting, recordGroupBuy, recordMilestone,
   getGroupsForMint, addMintGroup, removeMintGroup,
   getWalletLastAlert, setWalletLastAlert,
+  updateLeaderboard, getLeaderboard,
+  getSpamTime, setSpamTime,
 };
